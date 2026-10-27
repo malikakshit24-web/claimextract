@@ -56,6 +56,9 @@ def evaluate(data_dir: Path, extractor_name: str) -> dict:
     by_kind: dict[str, list[bool]] = defaultdict(list)
     exact, failures, latencies = 0, [], []
     defect_total = defect_caught = clean_correct = clean_passed = 0
+    # Wrong extractions that were still routed as validated: the errors nobody would see.
+    wrong_total = wrong_validated = 0
+    silent_errors: list[dict] = []
 
     for entry in manifest:
         expected = ClaimForm.model_validate(entry["claim"])
@@ -76,6 +79,11 @@ def evaluate(data_dir: Path, extractor_name: str) -> dict:
         by_kind[entry["kind"]].append(all_ok)
 
         status = route(validate_claim(result.claim), result.uncertain_fields)
+        if not all_ok:
+            wrong_total += 1
+            if status == DocumentStatus.VALIDATED:
+                wrong_validated += 1
+                silent_errors.append({"file": entry["file"], "wrong_fields": [k for k, v in fields.items() if not v]})
         if entry["defects"]:
             defect_total += 1
             defect_caught += status == DocumentStatus.NEEDS_REVIEW
@@ -94,6 +102,8 @@ def evaluate(data_dir: Path, extractor_name: str) -> dict:
         "field_accuracy_pct": {k: pct(sum(v), len(v)) for k, v in sorted(per_field.items())},
         "defects_sent_to_review": f"{defect_caught}/{defect_total}",
         "clean_correct_auto_validated": f"{clean_passed}/{clean_correct}",
+        "wrong_extractions_auto_validated": f"{wrong_validated}/{wrong_total}",
+        "silent_errors": silent_errors[:10],
         "mean_latency_s": round(sum(latencies) / len(latencies), 3) if latencies else None,
         "failures": failures[:10],
     }

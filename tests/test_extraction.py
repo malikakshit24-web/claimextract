@@ -143,3 +143,17 @@ def test_llm_with_no_credentials_is_an_extraction_error(generated_claims):
     client.api_key = client.auth_token = None
     with pytest.raises(ExtractionError, match="credentials"):
         ClaudeVisionExtractor(client=client).extract(load_document(render_pdf(generated_claims[0])))
+
+
+def test_evaluate_digital_set(tmp_path):
+    from claimextract.evaluate import evaluate
+    from claimextract.generator import generate
+
+    generate(20, tmp_path, seed=5, scan_rate=0.0, defect_rate=0.3)
+    report = evaluate(tmp_path, "ocr")
+
+    assert report["failed"] == 0
+    assert report["exact_match_pct"] == 100.0
+    caught, total = map(int, report["defects_sent_to_review"].split("/"))
+    assert caught == total > 0
+    assert report["wrong_extractions_auto_validated"] == "0/0"

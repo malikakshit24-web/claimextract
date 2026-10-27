@@ -86,20 +86,33 @@ uv run claimextract-evaluate --data data/synthetic --extractor ocr
 uv run claimextract-evaluate --data data/synthetic --extractor llm   # needs ANTHROPIC_API_KEY; costs money
 ```
 
-The evaluation reports field-level accuracy, exact-match rate by document kind (digital vs scan), how many defective documents were sent to review, how many clean documents passed straight through, and latency.
+The evaluation reports field-level accuracy, exact-match rate by document kind (digital vs scan), how many defective documents were sent to review, how many clean documents passed straight through, how many **wrong** extractions were still auto-validated (silent errors, the number that matters most), and latency.
+
+To evaluate scans with Tesseract inside Docker:
+
+```bash
+docker compose cp data/synthetic api:/tmp/synthetic
+docker compose exec api claimextract-evaluate --data /tmp/synthetic --extractor ocr
+```
 
 ## Results so far
 
-| Measure | OCR + rules | Claude vision |
-|---|---|---|
-| Exact match, digital PDFs (200 docs) | 100% | not run yet |
-| Exact match, noisy scans | not run yet | not run yet |
-| Exact match, unseen layouts | not run yet | not run yet |
-| Defective documents sent to review | 40 / 40 | not run yet |
-| Clean documents auto-validated | 160 / 160 | not run yet |
-| Cost per document | $0 | not run yet |
+| Measure | OCR + rules, digital PDFs (200) | OCR + rules, noisy scans (100) | Claude vision |
+|---|---|---|---|
+| Documents extracted exactly | 100% | 2% | not run yet |
+| Injected defects sent to review | 40 / 40 | 23 / 23 | not run yet |
+| Correct, clean documents auto-validated | 160 / 160 | 1 / 1 | not run yet |
+| **Wrong extractions that slipped through as validated** | 0 / 0 | **3 / 98** | not run yet |
+| Mean latency per document | 0.001 s | 1.3 s | not run yet |
+| Cost per document | $0 | $0 | not run yet |
 
-The digital-PDF result is the easy case: the baseline parser reads the embedded text of a layout it was written for. The meaningful comparisons are noisy scans and layouts the rules have never seen. Those come next.
+What this shows so far:
+
+- **Digital PDFs are the easy case.** The baseline reads the embedded text of a layout it was written for.
+- **Noisy scans break the baseline.** Tesseract misreads letters and digits (`J1100` → `41100`, `12.40` → `12:40`), so almost every scan needs a human. Field accuracy ranges from 33% (diagnosis codes) to 82% (claim ID).
+- **Validation catches most of the damage, but not all of it.** Every injected defect went to review. Still, 3 wrong extractions passed every check: two misread names and a diagnosis code misread as a *different valid* code. Format and arithmetic rules can't catch a plausible wrong value. That's why the vision extractor reports its own uncertainty, and why the next result to measure is whether it lowers both the review rate and the silent-error rate.
+
+Scan results were measured inside the Docker image (Tesseract 5.5, `--psm 6`).
 
 ## Development
 
@@ -130,7 +143,8 @@ src/claimextract/
 
 ## Roadmap
 
-- [ ] Run the scan and LLM evaluations; publish cost and latency per document
+- [x] Baseline evaluation on digital PDFs and noisy scans
+- [ ] Claude vision evaluation on the same scans; cost and latency per document
 - [ ] Additional payer layouts, with some held back to test generalisation
 - [ ] More document types: Explanation of Benefits, remittance advice
 - [ ] Alembic migrations

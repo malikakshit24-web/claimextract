@@ -108,7 +108,9 @@ class OcrRulesExtractor:
         import pytesseract
 
         try:
-            return "\n".join(pytesseract.image_to_string(page) for page in document.pages)
+            # psm 6 (one uniform block) keeps table rows together; the default
+            # page segmentation reads the service table column by column.
+            return "\n".join(pytesseract.image_to_string(page, config="--psm 6") for page in document.pages)
         except pytesseract.TesseractNotFoundError as exc:
             raise ExtractionError(
                 "Tesseract is not installed; scanned documents need it (it is included in the Docker image)"
