@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: claimextract
+      POSTGRES_PASSWORD: claimextract
+      POSTGRES_DB: claimextract
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U claimextract"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      CLAIMEXTRACT_DATABASE_URL: postgresql+psycopg://claimextract:claimextract@db:5432/claimextract
+      CLAIMEXTRACT_DEFAULT_EXTRACTOR: ${CLAIMEXTRACT_DEFAULT_EXTRACTOR:-ocr}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:
