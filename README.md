@@ -97,22 +97,29 @@ docker compose exec api claimextract-evaluate --data /tmp/synthetic --extractor 
 
 ## Results so far
 
-| Measure | OCR + rules, digital PDFs (200) | OCR + rules, noisy scans (100) | Claude vision |
-|---|---|---|---|
-| Documents extracted exactly | 100% | 2% | not run yet |
-| Injected defects sent to review | 40 / 40 | 23 / 23 | not run yet |
-| Correct, clean documents auto-validated | 160 / 160 | 1 / 1 | not run yet |
-| **Wrong extractions that slipped through as validated** | 0 / 0 | **3 / 98** | not run yet |
-| Mean latency per document | 0.001 s | 1.3 s | not run yet |
-| Cost per document | $0 | $0 | not run yet |
+The same 100 noisy scans (rotation, blur, speckle; 23 with an injected defect), run through both extractors:
 
-What this shows so far:
+| Measure | OCR + rules | Claude vision (`claude-opus-5-5`) |
+|---|---|---|
+| **Documents extracted exactly** | **2%** | **98%** |
+| Field accuracy (lowest field) | 33% (diagnosis codes) | 99% (claim ID, member ID) |
+| Documents sent to human review | 96 / 100 | 25 / 100 |
+| Injected defects sent to review | 23 / 23 | 23 / 23 |
+| Correct, clean documents auto-validated | 1 / 1 | 74 / 75 |
+| **Wrong values that slipped through as validated** | **3 / 100 documents** | **1 / 100 documents** |
+| Mean latency per document | 1.3 s | 4.9 s |
+| Cost per document | $0 | $0.025 (measured; $2.49 for the run) |
 
-- **Digital PDFs are the easy case.** The baseline reads the embedded text of a layout it was written for.
-- **Noisy scans break the baseline.** Tesseract misreads letters and digits (`J1100` → `41100`, `12.40` → `12:40`), so almost every scan needs a human. Field accuracy ranges from 33% (diagnosis codes) to 82% (claim ID).
-- **Validation catches most of the damage, but not all of it.** Every injected defect went to review. Still, 3 wrong extractions passed every check: two misread names and a diagnosis code misread as a *different valid* code. Format and arithmetic rules can't catch a plausible wrong value. That's why the vision extractor reports its own uncertainty, and why the next result to measure is whether it lowers both the review rate and the silent-error rate.
+On digital PDFs (200 documents, the layout the rules were written for), the OCR baseline already extracts 100% exactly, catches 40 / 40 defects and lets nothing wrong through. There, the free baseline is the right tool.
 
-Scan results were measured inside the Docker image (Tesseract 5.5, `--psm 6`).
+What this shows:
+
+- **Noisy scans break the rules baseline.** Tesseract misreads letters and digits (`J1100` → `41100`, `12.40` → `12:40`), so 96 of 100 scans need a human, and that's barely better than typing them in by hand.
+- **Claude vision cuts the review load from 96% to 25% of documents.** Of the 25 it sent to review, 23 were the injected defects, which are supposed to be caught.
+- **Validation alone isn't enough.** With OCR, 3 wrong values passed every check: two misread names and a diagnosis code misread as a *different valid* code. With Claude, one wrong member ID passed. No format or arithmetic rule can catch a plausible but wrong value, so the remaining risk is cross-checking against a source of truth, such as the payer's member eligibility file.
+- **It costs about 2.5 cents and 5 seconds per scan.** That's a small fraction of what manual keying costs.
+
+Results were measured inside the Docker image (Tesseract 5.5, `--psm 6`; Claude at `medium` effort with structured outputs). Synthetic data, one layout. Generalisation to unseen layouts is still to be tested.
 
 ## Development
 
@@ -144,7 +151,8 @@ src/claimextract/
 ## Roadmap
 
 - [x] Baseline evaluation on digital PDFs and noisy scans
-- [ ] Claude vision evaluation on the same scans; cost and latency per document
+- [x] Claude vision evaluation on the same scans; cost and latency per document
+- [ ] Cross-check member IDs against a synthetic eligibility file to catch plausible-but-wrong values
 - [ ] Additional payer layouts, with some held back to test generalisation
 - [ ] More document types: Explanation of Benefits, remittance advice
 - [ ] Alembic migrations

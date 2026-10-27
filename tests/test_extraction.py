@@ -6,10 +6,39 @@ import pytest
 from claimextract.documents import UnsupportedDocument, load_document
 from claimextract.evaluate import compare
 from claimextract.extractors import ExtractionError
-from claimextract.extractors.llm import ClaudeVisionExtractor
+from claimextract.extractors.llm import ClaudeVisionExtractor, LLMClaim, LLMServiceLine, to_claim_form
 from claimextract.extractors.ocr import OcrRulesExtractor, parse_claim_text
 from claimextract.generator import pdf_to_scan, render_pdf
-from claimextract.schemas import LLMClaimExtraction
+from claimextract.schemas import ClaimForm
+
+
+def as_llm_output(claim: ClaimForm, uncertain: list[str] | None = None) -> LLMClaim:
+    """What Claude would return for this claim in the flat schema."""
+    s = lambda v: "" if v is None else str(v)  # noqa: E731
+    return LLMClaim(
+        claim_id=s(claim.claim_id),
+        patient_name=s(claim.patient_name),
+        patient_dob=s(claim.patient_dob),
+        member_id=s(claim.member_id),
+        payer_name=s(claim.payer_name),
+        provider_name=s(claim.provider_name),
+        provider_npi=s(claim.provider_npi),
+        diagnosis_codes=claim.diagnosis_codes,
+        service_lines=[
+            LLMServiceLine(
+                date_of_service=s(line.date_of_service),
+                cpt_code=s(line.cpt_code),
+                modifier=s(line.modifier),
+                diagnosis_pointer=s(line.diagnosis_pointer),
+                units=line.units or 0,
+                charge=s(line.charge),
+            )
+            for line in claim.service_lines
+        ],
+        total_charge=s(claim.total_charge),
+        amount_paid=s(claim.amount_paid),
+        uncertain_fields=uncertain or [],
+    )
 
 
 def test_digital_pdf_round_trip(generated_claims):
@@ -68,22 +97,51 @@ def fake_client(messages):
 
 def test_llm_extractor_maps_structured_output(generated_claims):
     claim = generated_claims[0]
-    parsed = LLMClaimExtraction(**claim.model_dump(), uncertain_fields=["service_lines[0].charge"])
-    messages = FakeMessages(SimpleNamespace(stop_reason="end_turn", parsed_output=parsed))
+    parsed = as_llm_output(claim, ["service_lines[0].charge"])
+    usage = SimpleNamespace(input_tokens=2000, output_tokens=500)
+    response = SimpleNamespace(stop_reason="end_turn", parsed_output=parsed, model="claude-opus-5-5", usage=usage)
+    messages = FakeMessages(response)
     extractor = ClaudeVisionExtractor(client=fake_client(messages))
 
     result = extractor.extract(load_document(render_pdf(claim)))
 
     assert result.claim == claim
     assert result.uncertain_fields == ["service_lines[0].charge"]
+    assert result.cost_usd == pytest.approx((2000 * 4 + 500 * 20) / 1_000_000)
     call = messages.calls[0]
-    assert call["output_format"] is LLMClaimExtraction
+    assert call["output_format"] is LLMClaim
     assert call["messages"][0]["content"][0]["type"] == "document"
+
+
+def test_llm_schema_has_no_unions_or_optional_fields():
+    """Structured outputs cap nullable/optional fields; the flat schema must stay under it."""
+    import json
+
+    from anthropic.lib._parse._transform import transform_schema
+
+    schema = transform_schema(LLMClaim)
+    assert "anyOf" not in json.dumps(schema)
+    for obj in [schema, *schema["$defs"].values()]:
+        assert set(obj["required"]) == set(obj["properties"])
+
+
+def test_flat_output_blanks_and_bad_values(valid_claim):
+    llm = as_llm_output(valid_claim)
+    llm.member_id = "  "
+    llm.service_lines[0].modifier = ""
+    llm.service_lines[1].charge = "6S.00"  # misread digit
+    llm.patient_dob = "1980-13-40"
+    claim, uncertain = to_claim_form(llm)
+    assert claim.member_id is None
+    assert claim.service_lines[0].modifier is None
+    assert claim.service_lines[1].charge is None
+    assert claim.patient_dob is None
+    assert uncertain == ["service_lines[1].charge", "patient_dob"]
 
 
 def test_llm_extractor_sends_images_for_scans(generated_claims):
     claim = generated_claims[0]
-    parsed = LLMClaimExtraction(**claim.model_dump())
+    parsed = as_llm_output(claim)
     messages = FakeMessages(SimpleNamespace(stop_reason="end_turn", parsed_output=parsed))
     png = pdf_to_scan(render_pdf(claim), random.Random(3))
 

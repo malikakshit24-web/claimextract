@@ -42,15 +42,6 @@ class ClaimForm(BaseModel):
     amount_paid: Decimal | None = Field(None, description="Amount already paid in dollars")
 
 
-class LLMClaimExtraction(ClaimForm):
-    """What the vision LLM returns: the claim plus fields it was unsure about."""
-
-    uncertain_fields: list[str] = Field(
-        default_factory=list,
-        description="Names of fields that were illegible, ambiguous or guessed",
-    )
-
-
 class Severity(StrEnum):
     ERROR = "error"
     WARNING = "warning"
@@ -74,6 +65,7 @@ class ExtractionResult(BaseModel):
     claim: ClaimForm
     extractor: str
     uncertain_fields: list[str] = Field(default_factory=list)
+    cost_usd: float | None = None  # API cost, for extractors that call a paid model
 
 
 class DocumentOut(BaseModel):

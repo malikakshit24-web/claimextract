@@ -54,7 +54,7 @@ def evaluate(data_dir: Path, extractor_name: str) -> dict:
     manifest = json.loads((data_dir / "manifest.json").read_text())
     per_field: dict[str, list[bool]] = defaultdict(list)
     by_kind: dict[str, list[bool]] = defaultdict(list)
-    exact, failures, latencies = 0, [], []
+    exact, failures, latencies, costs = 0, [], [], []
     defect_total = defect_caught = clean_correct = clean_passed = 0
     # Wrong extractions that were still routed as validated: the errors nobody would see.
     wrong_total = wrong_validated = 0
@@ -70,6 +70,8 @@ def evaluate(data_dir: Path, extractor_name: str) -> dict:
             failures.append({"file": entry["file"], "error": str(exc)})
             continue
         latencies.append(time.perf_counter() - start)
+        if result.cost_usd is not None:
+            costs.append(result.cost_usd)
 
         fields = compare(expected, result.claim)
         for name, ok in fields.items():
@@ -105,6 +107,8 @@ def evaluate(data_dir: Path, extractor_name: str) -> dict:
         "wrong_extractions_auto_validated": f"{wrong_validated}/{wrong_total}",
         "silent_errors": silent_errors[:10],
         "mean_latency_s": round(sum(latencies) / len(latencies), 3) if latencies else None,
+        "mean_cost_usd": round(sum(costs) / len(costs), 4) if costs else 0.0,
+        "total_cost_usd": round(sum(costs), 2),
         "failures": failures[:10],
     }
 
